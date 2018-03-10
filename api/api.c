@@ -7,7 +7,6 @@
 #include "box.h"
 #include "image.h"
 #include "demo.h"
-#include <sys/time.h>
 #include "api.h"
 
 static image g_imgBuf;
@@ -17,30 +16,47 @@ static char** g_ppName = NULL;
 static float** g_ppProb = NULL;
 static box *g_pBox = NULL;
 static network* g_pNet = NULL;
-static float *g_pPrediction = NULL;
+static float** g_ppPred = NULL;
+static int g_iPred = 0;
+static int g_nPredAvr = 3;
+static float* g_pAvr = NULL;
 static int g_nDetect = 0;
-static float* g_pAvg = NULL;
 
 bool yoloInit(	const char* pCfgFile,
 		const char* pWeightFile,
 		const char* pLabelFile,
-		int nClass,
+		int nPredAvr,
 		int nBatch)
 {
-    g_ppName = get_labels(pLabelFile);
-    g_nClass = nClass;
+    FILE *pF = fopen(pLabelFile, "r");
+    if(!pF) return false;
+    g_nClass = 0;
+    while(fgetl(pF))g_nClass++;
+    fclose(pF);
+    if(g_nClass <= 0) return false;
 
+    g_ppName = get_labels(pLabelFile);
     g_pNet = load_network(pCfgFile, pWeightFile, 0);
     set_batch_network(g_pNet, nBatch);
 
     layer L = g_pNet->layers[g_pNet->n-1];
     g_nDetect = L.n*L.w*L.h;
-    g_pAvg = (float *) calloc(L.outputs, sizeof(float));
+    g_pAvr = (float *) calloc(L.outputs, sizeof(float));
 
-    g_pPrediction = (float *) calloc(L.outputs, sizeof(float));
+    int i;
+
+    g_nPredAvr = nPredAvr;
+    g_ppPred = calloc(g_nPredAvr, sizeof(float*));
+    g_ppPred = (float *) calloc(L.outputs, sizeof(float));
+    for(i = 0; i < g_nPredAvr; i++)
+    {
+        g_ppPred[i] = (float*)calloc(L.outputs, sizeof(float));
+    }
+    g_pAvr = (float*)calloc(L.outputs, sizeof(float));
+
     g_pBox = (box*) calloc(L.w*L.h*L.n, sizeof(box));
     g_ppProb = (float **) calloc(L.w*L.h*L.n, sizeof(float *));
-    for(int i = 0; i < L.w*L.h*L.n; i++)
+    for(i = 0; i < L.w*L.h*L.n; i++)
     {
 	g_ppProb[i] = (float *)calloc(L.classes+1, sizeof(float));
     }
@@ -77,7 +93,11 @@ int yoloUpdate(IplImage* pImg,
     layer L = g_pNet->layers[g_pNet->n-1];
     float *pPred = network_predict(g_pNet, g_imgBufLetter.data);
 
-    memcpy(g_pPrediction, pPred, L.outputs*sizeof(float));
+    memcpy(g_ppPred[g_iPred], pPred, L.outputs*sizeof(float));
+    mean_arrays(g_ppPred, g_nPredAvr, L.outputs, g_pAvr);
+    L.output = g_pAvr;
+
+    if(++g_iPred >= g_nPredAvr)g_iPred=0;
 
     if(L.type == DETECTION)
     {
@@ -96,18 +116,19 @@ int yoloUpdate(IplImage* pImg,
     {
 	yolo_object* pO = &pObj[iDetect];
 	pO->m_iClass = -1;
-	pO->m_prob = 0.0;	
-
+	pO->m_mClass = 0;
+	
+	float topProb = 0;
         for (j = 0; j < g_nClass; j++)
 	{
 	    float prob = g_ppProb[i][j];
 	    if (prob < thresh)continue;
 
-            if (prob > pO->m_prob)
+	    pO->m_mClass |= 1 << j;
+            if (prob > topProb)
 	    {
             	pO->m_iClass = j;
-		pO->m_pName = g_ppName[j];
-		pO->m_prob = g_ppProb[i][j];
+		topProb = g_ppProb[i][j];
             }
         }
 
@@ -126,4 +147,16 @@ int yoloUpdate(IplImage* pImg,
 
     return iDetect;
 }
+
+int yoloNClass(void)
+{
+	return g_nClass;
+}
+
+char* yoloGetClassName(int iClass)
+{
+	if(iClass<0 || iClass >= g_nClass)return NULL;
+	return g_ppName[iClass];
+}
+
 
