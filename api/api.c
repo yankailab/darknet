@@ -15,88 +15,121 @@
 
 
 static image g_imgBuf;
-static g_pIPLImage* g_pIPL;
-
-static char **g_ppName;
-static int g_nClass;
-static float **g_ppProb;
-static box *g_pBox;
-static network *g_pNet;
-static float **g_ppPrediction;
-static float g_thresh = 0;
-static float g_hier = .5;
+static image g_imgBufLetter;
+static int g_nClass = 0;
+static char** g_ppName = NULL;
+static float** g_ppProb = NULL;
+static box *g_pBox = NULL;
+static network* g_pNet = NULL;
+static float *g_pPrediction = NULL;
 static int g_nDetect = 0;
-static float *g_pAvg;
+static float* g_pAvg = NULL;
 
-bool yoloInit(	char* pDataFile, 		//"/home/kai/dev/darknet/cfg/coco.data"
-		char* pCfgFile, 		//"/home/kai/dev/darknet/cfg/yolo.cfg"
-		char* pWeightFile,		//"/home/kai/dev/darknet/data/yolo.weights"
-		char* pLabelFile,		//"/home/kai/dev/darknet/data/names.list"
-		float thresh,			//0.24
-		float hier,			//0.5
-		int w,
-		int h,
-		int nChannel,
+bool yoloInit(	const char* pCfgFile,
+		const char* pWeightFile,
+		const char* pLabelFile,
+		int nClass,
 		int nBatch)
 {
-
-    list *pOpt = read_data_cfg(pDataFile);
-    g_nClass = option_find_int(pOpt, "classes", 20);
     g_ppName = get_labels(pLabelFile);
-    g_ppPrediction = calloc(demo_frame, sizeof(float*));
-    g_thresh = thresh;
-    g_hier = hier;
+    g_nClass = nClass;
 
-    g_pNet = load_network(pCfgfile, pWeightFile, 0);
-    set_batch_network(g_pNet, 1);
+    g_pNet = load_network(pCfgFile, pWeightFile, 0);
+    set_batch_network(g_pNet, nBatch);
 
     layer L = g_pNet->layers[g_pNet->n-1];
     g_nDetect = L.n*L.w*L.h;
     g_pAvg = (float *) calloc(L.outputs, sizeof(float));
 
-    int j;
-    for(j = 0; j < demo_frame; ++j) g_ppPrediction[j] = (float *) calloc(L.outputs, sizeof(float));
+    g_pPrediction = (float *) calloc(L.outputs, sizeof(float));
+    g_pBox = (box*) calloc(L.w*L.h*L.n, sizeof(box));
+    g_ppProb = (float **) calloc(L.w*L.h*L.n, sizeof(float *));
+    for(int i = 0; i < L.w*L.h*L.n; i++)
+    {
+	g_ppProb[i] = (float *)calloc(L.classes+1, sizeof(float));
+    }
 
-    g_pBox = (box*)calloc(L.w*L.h*L.n, sizeof(box));
-    g_ppProb = (float **)calloc(L.w*L.h*L.n, sizeof(float *));
-    for(j = 0; j < L.w*L.h*L.n; ++j) g_ppProb[j] = (float *)calloc(L.nClass+1, sizeof(float));
-
-    g_pIPL = cvCreateImage(cvSize(w,h), IPL_DEPTH_8U, nChannel);
+    g_imgBuf.data = NULL;
 
     return true;
 }
 
-
-void yoloUpdate(Mat* pImg)
+int yoloUpdate(IplImage* pImg,
+		yolo_object* pObj,
+		int nDetect,
+		float thresh,
+		float hier,
+		float nms)
 {
-    int status = fill_image_from_stream(cap, g_imgBuf);
+    if (!pImg)return -1;
+    if (!pObj)return -1;
+    if (nDetect <= 0)return -1;
 
-    float nms = .4;
-
-    layer L = g_pNet->layers[g_pNet->n-1];
-    float *X = g_imgBuf_letter[(g_imgBuf_index+2)%3].data;
-    float *prediction = network_predict(g_pNet, X);
-
-    memcpy(g_ppPrediction[demo_index], prediction, L.outputs*sizeof(float));
-    mean_arrays(g_ppPrediction, demo_frame, L.outputs, g_pAvg);
-    L.output = g_pAvg;
-
-    if(L.type == DETECTION)
+    if(g_imgBuf.data)
     {
-        get_detection_g_pBox(l, 1, 1, g_thresh, g_ppProb, g_pBox, 0);
-    }
-    else if (L.type == REGION)
-    {
-        get_region_g_pBox(l, g_imgBuf[0].w, g_imgBuf[0].h, g_pNet->w, g_pNet->h, g_thresh, g_ppProb, g_pBox, 0, 0, 0, g_hier, 1);
+	ipl_into_image(pImg, g_imgBuf);
+	rgbgr_image(g_imgBuf);
+	letterbox_image_into(g_imgBuf, g_pNet->w, g_pNet->h, g_imgBufLetter);
     }
     else
     {
-        error("Last layer must produce detections\n");
+	g_imgBuf = ipl_to_image(pImg);
+	rgbgr_image(g_imgBuf);
+	g_imgBufLetter = letterbox_image(g_imgBuf, g_pNet->w, g_pNet->h);
     }
-    if (nms > 0) do_nms_obj(g_pBox, g_ppProb, L.w*L.h*L.n, L.nClass, nms);
 
-    image display = g_imgBuf[(g_imgBuf_index+2) % 3];
-    draw_detections(display, g_nDetect, g_thresh, g_pBox, g_ppProb, 0, g_ppName, demo_alphabet, g_nClass);
+    layer L = g_pNet->layers[g_pNet->n-1];
+    float *pPred = network_predict(g_pNet, g_imgBufLetter.data);
 
+    memcpy(g_pPrediction, pPred, L.outputs*sizeof(float));
+//    mean_arrays(g_pPrediction, 1, L.outputs, g_pAvg);
+//    L.output = g_pAvg;
+
+    if(L.type == DETECTION)
+    {
+        get_detection_boxes(L, 1, 1, thresh, g_ppProb, g_pBox, 0);
+    }
+    else if (L.type == REGION)
+    {
+        get_region_boxes(L, g_imgBuf.w, g_imgBuf.h, g_pNet->w, g_pNet->h, thresh, g_ppProb, g_pBox, 0, 0, 0, hier, 1);
+    }
+
+    if (nms > 0) do_nms_obj(g_pBox, g_ppProb, L.w*L.h*L.n, L.classes, nms);
+
+    int iDetect = 0;
+    int i,j;
+    for (i = 0; i < g_nDetect; i++)
+    {
+	yolo_object* pO = &pObj[iDetect];
+	pO->m_iClass = -1;
+	pO->m_prob = 0.0;	
+
+        for (j = 0; j < g_nClass; j++)
+	{
+	    float prob = g_ppProb[i][j];
+	    if (prob < thresh)continue;
+
+            if (prob > pO->m_prob)
+	    {
+            	pO->m_iClass = j;
+		pO->m_pName = g_ppName[j];
+		pO->m_prob = g_ppProb[i][j];
+            }
+        }
+
+	if(pO->m_iClass < 0) continue;
+
+        box b = g_pBox[i];
+	b.w *= 0.5;
+	b.h *= 0.5;
+        pO->m_l = b.x - b.w;
+        pO->m_r = b.x + b.w;
+        pO->m_t = b.y - b.h;
+        pO->m_b = b.y + b.h;
+
+	if(++iDetect >= nDetect) return nDetect;
+    }
+
+    return iDetect;
 }
 
