@@ -10,10 +10,6 @@
 #include <sys/time.h>
 #include "api.h"
 
-
-//./darknet detector demo cfg/coco.data cfg/yolo.cfg data/yolo.weights -c 1
-
-
 static image g_imgBuf;
 static image g_imgBufLetter;
 static int g_nClass = 0;
@@ -82,8 +78,6 @@ int yoloUpdate(IplImage* pImg,
     float *pPred = network_predict(g_pNet, g_imgBufLetter.data);
 
     memcpy(g_pPrediction, pPred, L.outputs*sizeof(float));
-//    mean_arrays(g_pPrediction, 1, L.outputs, g_pAvg);
-//    L.output = g_pAvg;
 
     if(L.type == DETECTION)
     {
