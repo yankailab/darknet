@@ -19,7 +19,7 @@ bool yoloInit(	const char* pCfgFile,
 
 int yoloUpdate( IplImage* pImg,
 		yolo_object* pObj,
-		int nDetect,
+		int nObj,
 		float thresh,
 		float hier,
 		float nms);
