@@ -122,24 +122,24 @@ int yoloUpdate(IplImage* pImg,
     for (i = 0; i < nBox; i++)
     {
 	yolo_object* pO = &pObj[iBox];
-	pO->m_iClass = -1;
+	pO->m_topClass = -1;
 	pO->m_mClass = 0;
-	
-	float topProb = 0;
+	pO->m_topProb = 0;
+
         for (j = 0; j < g_nClass; j++)
 	{
 	    float prob = pDet[i].prob[j];
 	    if (prob < thresh)continue;
 
 	    pO->m_mClass |= 1 << j;
-            if (prob > topProb)
+            if (prob > pO->m_topProb)
 	    {
-            	pO->m_iClass = j;
-		topProb = prob;
+            	pO->m_topClass = j;
+		pO->m_topProb = prob;
             }
         }
 
-	if(pO->m_iClass < 0) continue;
+	if(pO->m_topClass < 0) continue;
 
         box b = pDet[i].bbox;
 	b.w *= 0.5;

@@ -3,7 +3,8 @@
 
 typedef struct yolo_object
 {
-    int m_iClass;
+    int m_topClass;
+    float m_topProb;
     uint64_t m_mClass;	//all candidate class mask
     float m_l;
     float m_t;
